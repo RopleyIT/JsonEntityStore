@@ -86,23 +86,23 @@ namespace JsonEntityStore
             return cache;
         }
 
+        /// <summary>
+        /// Reload the contents of the in memory entity
+        /// List for type T. Overwrites any changes that
+        /// have not been saved out to disk.
+        /// </summary>
+
         public void Read()
         {
+            nextFreeId = 1;
             if (useZip)
                 ReadZip();
             else
             {
-                // Get the class name and file storage name
-
-                string className = typeof(T).FullName;
-                var fileName = Path.Combine(storageFolder, $"{className}.json");
-                if (File.Exists(fileName))
+                if (File.Exists(ClassStoragePath))
                 {
-                    var js = new JsonSerializer();
-                    using (var tr = new StreamReader(fileName))
-                    using (var jr = new JsonTextReader(tr))
-                        cache = js.Deserialize<List<T>>(jr);
-                    cache.Sort((t1, t2) => t1.Id - t2.Id);
+                    using var tr = new StreamReader(ClassStoragePath);
+                    ReadJson(tr);
                 }
                 else
                     cache = new List<T>();
@@ -111,25 +111,28 @@ namespace JsonEntityStore
 
         private void ReadZip()
         {
-            // Get the class name and file storage name
-
-            string className = typeof(T).FullName;
-            var fileName = Path.Combine(storageFolder, $"{className}.json.zip");
-            if (File.Exists(fileName))
+            if (File.Exists(ClassStoragePath + ".zip"))
             {
-                using ZipArchive zf = ZipFile.OpenRead(fileName);
+                using ZipArchive zf = ZipFile
+                    .OpenRead(ClassStoragePath + ".zip");
                 foreach (ZipArchiveEntry ze in zf.Entries)
                 {
                     using Stream s = ze.Open();
-                    var js = new JsonSerializer();
                     using var tr = new StreamReader(s);
-                    using var jr = new JsonTextReader(tr);
-                    cache = js.Deserialize<List<T>>(jr);
-                    cache.Sort((t1, t2) => t1.Id - t2.Id);
+                    ReadJson(tr);
                 }
             }
             else
                 cache = new List<T>();
+        }
+
+        private void ReadJson(TextReader reader)
+        {
+            using var jr = new JsonTextReader(reader);
+            var js = new JsonSerializer();
+            cache = js.Deserialize<List<T>>(jr);
+            cache.Sort((t1, t2) => t1.Id - t2.Id);
+            nextFreeId = cache[^1].Id + 1;
         }
 
         /// <summary>
@@ -163,26 +166,25 @@ namespace JsonEntityStore
                 SaveZip();
             else
             {
-                string className = typeof(T).FullName;
-                var fileName = Path.Combine(storageFolder, $"{className}.json");
-                var js = new JsonSerializer();
-                using var tr = new StreamWriter(fileName, false);
-                using var jr = new JsonTextWriter(tr)
-                {
-                    Formatting = Formatting.Indented
-                };
-                js.Serialize(jr, cache);
+                using var writer = new StreamWriter(ClassStoragePath, false);
+                SaveJson(writer);
             }
         }
 
+        private string ClassStoragePath =>
+            Path.Combine(storageFolder, $"{typeof(T).FullName}.json");
+
         private void SaveZip()
         {
-            string className = typeof(T).FullName;
-            var fileName = Path.Combine(storageFolder, $"{className}.json.zip");
-            using FileStream zipFile = new FileStream(fileName, FileMode.Create);
+            using FileStream zipFile = new FileStream(ClassStoragePath + ".zip", FileMode.Create);
             using ZipArchive archive = new ZipArchive(zipFile, ZipArchiveMode.Update);
-            ZipArchiveEntry zipEntry = archive.CreateEntry($"{className}.json");
-            using StreamWriter writer = new StreamWriter(zipEntry.Open());
+            ZipArchiveEntry zipEntry = archive.CreateEntry(ClassStoragePath);
+            using var writer = new StreamWriter(zipEntry.Open());
+            SaveJson(writer);
+        }
+
+        private void SaveJson(TextWriter writer)
+        {
             var js = new JsonSerializer();
             using var jr = new JsonTextWriter(writer)
             {
